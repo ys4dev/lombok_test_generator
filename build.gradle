@@ -1,0 +1,69 @@
+apply plugin: 'idea'
+
+ext {
+    jdk = 1.8
+    encoding = 'UTF-8'
+}
+allprojects {
+    repositories {
+        jcenter()
+    }
+}
+subprojects {
+    apply plugin: 'java'
+    group = 'sample.processor'
+    version = '1.0'
+    compileJava {
+        sourceCompatibility = rootProject.jdk
+        targetCompatibility = rootProject.jdk
+        options.encoding = rootProject.encoding
+    }
+    dependencies {
+        testCompile 'junit:junit:4.11'
+    }
+}
+project(':application') {
+    apply plugin: 'jacoco'
+    ext {
+        generated = file("${projectDir}/src/test/generated")
+    }
+    configurations {
+        annotationProcessor
+    }
+    sourceSets {
+        test {
+            java {
+                srcDirs generated
+            }
+        }
+    }
+    dependencies {
+        annotationProcessor project(':processor')
+        compile group: 'org.projectlombok', name: 'lombok', version: '1.16.10'
+    }
+    task cleanGenerated(type: Delete) {
+        delete generated
+    }
+    compileJava {
+        dependsOn cleanGenerated
+        doFirst {
+            mkdir generated
+        }
+        options.compilerArgs += ['-s', generated, '-processor', 'sample.Processor,lombok.launch.AnnotationProcessorHider$AnnotationProcessor,lombok.launch.AnnotationProcessorHider$ClaimingProcessor']
+//        options.compilerArgs += ['-s', generated, '-processor', 'sample.Processor']
+        classpath += configurations.annotationProcessor
+    }
+    clean.dependsOn cleanGenerated
+}
+
+project(':processor') {
+    dependencies {
+        // https://mvnrepository.com/artifact/org.projectlombok/lombok
+        compile group: 'org.projectlombok', name: 'lombok', version: '1.16.10'
+        // https://mvnrepository.com/artifact/com.squareup/javapoet
+        compile group: 'com.squareup', name: 'javapoet', version: '1.7.0'
+        // https://mvnrepository.com/artifact/junit/junit
+        compile group: 'junit', name: 'junit', version: '4.12'
+
+    }
+}

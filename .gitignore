@@ -1,0 +1,4 @@
+.idea
+build
+application/src/test
+.gradle
