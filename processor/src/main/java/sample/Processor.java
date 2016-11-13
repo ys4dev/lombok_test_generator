@@ -13,6 +13,7 @@ import javax.lang.model.element.*;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeMirror;
 import java.util.*;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 import static sample.Processor.Indexed.withIndex;
@@ -117,11 +118,31 @@ public class Processor extends AbstractProcessor {
                 (element.getAnnotation(NoArgsConstructor.class) != null && element.getAnnotation(AllArgsConstructor.class) == null);
     }
 
+    private Predicate<String> testFields(TypeElement element) {
+        EqualsAndHashCode annotation = element.getAnnotation(EqualsAndHashCode.class);
+        if (annotation == null) {
+            return name -> true;
+        }
+
+        String[] of = annotation.of();
+        if (of != null && of.length > 0) {
+            Arrays.sort(of);
+            return name -> Arrays.binarySearch(of, name) >= 0;
+        }
+        String[] exclude = annotation.exclude();
+        if (exclude != null && exclude.length > 0) {
+            Arrays.sort(exclude);
+            return name -> Arrays.binarySearch(exclude, name) < 0;
+        }
+        return name -> true;
+    }
+
     private List<TypeAndName> fields(TypeElement element) {
+        Predicate<String> testFields = testFields(element);
         return element.getEnclosedElements().stream()
                 .filter(e -> e.getKind() == ElementKind.FIELD)
                 .map(e -> (VariableElement)e)
-                .map(e -> new TypeAndName(e.asType(), e.getSimpleName()))
+                .map(e -> new TypeAndName(e.asType(), e.getSimpleName(), testValueOfType(e.asType(), e.getSimpleName(), testFields)))
                 .collect(Collectors.toList());
     }
 
@@ -139,18 +160,52 @@ public class Processor extends AbstractProcessor {
                 .addStatement("$T obj1", className)
                 .addStatement("$T obj2", className);
 
-        List<? extends Element> children = element.getEnclosedElements();
-        for (int i = children.size() - 1; i >= 0; i--) {
-            addNewObjectStatement(builder, element, "obj1", children.size());
-            addNewObjectStatement(builder, element, "obj2", i);
-            String eq = i == children.size() - 1 ? "" : "Not";
-            builder.addStatement("$T.assert" + eq + "Equals(obj1, obj2)", Assert.class);
+        List<TypeAndName> fields = fields(element);
+        List<List<PlaceholderValue>> values = values(fields);
+
+        for (List<PlaceholderValue> value : values) {
+            for (List<PlaceholderValue> value2 : values) {
+                addNewObjectStatement(builder, element, "obj1", value);
+                addNewObjectStatement(builder, element, "obj2", value2);
+                String eq = value == value2 ? "" : "Not";
+                builder.addStatement("$T.assert" + eq + "Equals(obj1, obj2)", Assert.class);
+            }
         }
 
         builder.addStatement("$T.assertEquals(obj1, obj1)", Assert.class);
         builder.addStatement("$T.assertNotEquals(obj1, null)", Assert.class);
 
         return builder.build();
+    }
+
+    private List<List<PlaceholderValue>> values(List<TypeAndName> fields) {
+        List<List<PlaceholderValue>> result = new ArrayList<>();
+        values(fields, new ArrayList<>(), result, false);
+        return result;
+    }
+
+    private void values(List<TypeAndName> fields, List<PlaceholderValue> buf, List<List<PlaceholderValue>> result, boolean containsAlt) {
+        if (fields.isEmpty()) {
+            result.add(buf);
+            return;
+        }
+
+        TypeAndName head = fields.get(0);
+        List<PlaceholderValue> values = head.getValues();
+
+        if (containsAlt) {
+            ArrayList<PlaceholderValue> tmp = new ArrayList<>(buf);
+            tmp.add(values.get(0));
+            values(fields.subList(1, fields.size()), tmp, result, true);
+        } else {
+            boolean first = true;
+            for (PlaceholderValue value : values) {
+                ArrayList<PlaceholderValue> tmp = new ArrayList<>(buf);
+                tmp.add(value);
+                values(fields.subList(1, fields.size()), tmp, result, ! first);
+                first = false;
+            }
+        }
     }
 
     private MethodSpec hashCodeTestSpec(TypeElement element) {
@@ -171,6 +226,21 @@ public class Processor extends AbstractProcessor {
         return builder
                 .addStatement("$T.assertEquals(obj1.hashCode(), obj2.hashCode())", Assert.class)
                 .build();
+    }
+
+    private void addNewObjectStatement(CodeBlock.Builder builder, TypeElement element, String objName, List<PlaceholderValue> values) {
+        ClassName className = ClassName.get(element);
+        if (needsFillConstructor(element)) {
+            String format = values.stream().map(v -> v.getPlaceholder()).collect(Collectors.joining(", "));
+            Object[] objects = values.stream().map(v -> v.getValue()).toArray();
+            builder.add(objName + " = new $T(", className);
+            builder.add(format + ");\n", objects);
+        } else {
+            builder.addStatement(objName + " = new $T()", className);
+            for (PlaceholderValue value : values) {
+                builder.addStatement(objName + ".set" + setter(value.getName()) + "(" + value.getPlaceholder() + ")", value.getValue());
+            }
+        }
     }
 
     private void addNewObjectStatement(CodeBlock.Builder builder, TypeElement element, String objName, int n) {
@@ -199,6 +269,61 @@ public class Processor extends AbstractProcessor {
         return s.substring(0, 1).toUpperCase() + s.substring(1);
     }
 
+    private List<PlaceholderValue> testValueOfType(TypeMirror type, Name name, Predicate<String> testFields) {
+        List<PlaceholderValue> values = testValueOfType(type, name);
+        if (! testFields.test(name.toString())) {
+            return values.subList(0, 1);
+        }
+        return values;
+    }
+
+    private List<PlaceholderValue> testValueOfType(TypeMirror type, Name name) {
+        switch (type.toString()) {
+            case "java.lang.String":
+                return Arrays.asList(
+                        new PlaceholderValue("$S", name, String.format("%s%d", name.toString(), 1)),
+                        new PlaceholderValue("$S", name, String.format("%s%d", name.toString(), 2)),
+                        new PlaceholderValue("$L", name, null)
+                );
+            case "int":
+                return Arrays.asList(
+                        new PlaceholderValue("$L", name, 1),
+                        new PlaceholderValue("$L", name, 2)
+                );
+            case "java.lang.Integer":
+                return Arrays.asList(
+                        new PlaceholderValue("$L", name, 1),
+                        new PlaceholderValue("$L", name, 2),
+                        new PlaceholderValue("$L", name, null)
+                );
+            case "long":
+                return Arrays.asList(
+                        new PlaceholderValue("$L", name, 1L),
+                        new PlaceholderValue("$L", name, 2L)
+                );
+            case "java.lang.Long":
+                return Arrays.asList(
+                        new PlaceholderValue("$L", name, 1L),
+                        new PlaceholderValue("$L", name, 2L),
+                        new PlaceholderValue("$L", name, null)
+                );
+            default:
+                if (type instanceof DeclaredType) {
+                    DeclaredType dtype = (DeclaredType) type;
+                    TypeElement element = (TypeElement) dtype.asElement();
+                    if (targetElements.contains(element)) {
+                        MethodSpec factory1 = factories.computeIfAbsent(new FactoryKey(element, 1), e -> createFactoryFor(e.getElement(), 1));
+                        MethodSpec factory2 = factories.computeIfAbsent(new FactoryKey(element, 2), e -> createFactoryFor(e.getElement(), 2));
+                        return Arrays.asList(
+                                new PlaceholderValue("$N()", name, factory1),
+                                new PlaceholderValue("$N()", name, factory2),
+                                new PlaceholderValue("$L", name, null)
+                        );
+                    }
+                }
+                return Arrays.asList(new PlaceholderValue("$L", name, null));
+        }
+    }
     private PlaceholderValue testValueOfType2(TypeMirror type, Name name, int n) {
         switch (type.toString()) {
             case "java.lang.String":
@@ -254,6 +379,7 @@ public class Processor extends AbstractProcessor {
     private static class TypeAndName {
         TypeMirror type;
         Name name;
+        List<PlaceholderValue> values;
     }
 
     @Value

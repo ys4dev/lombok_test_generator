@@ -8,7 +8,7 @@ import lombok.EqualsAndHashCode;
  *
  */
 @Data
-//@EqualsAndHashCode(of = {"name", "value"})
+@EqualsAndHashCode(of = {"name", "value"})
 public class MyHashEq {
     private String name;
     private String value;
