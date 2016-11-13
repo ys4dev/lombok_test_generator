@@ -178,6 +178,15 @@ public class Processor extends AbstractProcessor {
         return builder.build();
     }
 
+    private List<PlaceholderValue> valuesNull(List<TypeAndName> fields) {
+        List<TypeAndName> nullValues = fields.stream().map(e -> {
+            int size = e.getValues().size();
+            return new TypeAndName(e.getType(), e.getName(), e.getValues().subList(size - 1, size));
+        }).collect(Collectors.toList());
+        List<List<PlaceholderValue>> values = values(nullValues);
+        return values.get(values.size() - 1);
+    }
+
     private List<List<PlaceholderValue>> values(List<TypeAndName> fields) {
         List<List<PlaceholderValue>> result = new ArrayList<>();
         values(fields, new ArrayList<>(), result, false);
@@ -221,11 +230,21 @@ public class Processor extends AbstractProcessor {
         CodeBlock.Builder builder = CodeBlock.builder();
         builder.addStatement("$T obj1", className);
         builder.addStatement("$T obj2", className);
-        addNewObjectStatement(builder, element, "obj1", Integer.MAX_VALUE);
-        addNewObjectStatement(builder, element, "obj2", Integer.MAX_VALUE);
-        return builder
-                .addStatement("$T.assertEquals(obj1.hashCode(), obj2.hashCode())", Assert.class)
-                .build();
+
+        List<TypeAndName> fields = fields(element);
+        List<List<PlaceholderValue>> values = values(fields);
+
+        addNewObjectStatement(builder, element, "obj1", values.get(0));
+        addNewObjectStatement(builder, element, "obj2", values.get(0));
+        builder.addStatement("$T.assertEquals(obj1.hashCode(), obj2.hashCode())", Assert.class);
+
+        List<PlaceholderValue> nullValues = valuesNull(fields);
+
+        addNewObjectStatement(builder, element, "obj1", nullValues);
+        addNewObjectStatement(builder, element, "obj2", nullValues);
+        builder.addStatement("$T.assertEquals(obj1.hashCode(), obj2.hashCode())", Assert.class);
+
+        return builder.build();
     }
 
     private void addNewObjectStatement(CodeBlock.Builder builder, TypeElement element, String objName, List<PlaceholderValue> values) {
