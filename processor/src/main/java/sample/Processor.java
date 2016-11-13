@@ -12,6 +12,9 @@ import javax.lang.model.SourceVersion;
 import javax.lang.model.element.*;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeMirror;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.*;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -297,7 +300,7 @@ public class Processor extends AbstractProcessor {
     }
 
     private List<PlaceholderValue> testValueOfType(TypeMirror type, Name name) {
-        switch (type.toString()) {
+        switch (type.toString().split("<")[0]) {
             case "java.lang.String":
                 return Arrays.asList(
                         new PlaceholderValue("$S", name, String.format("%s%d", name.toString(), 1)),
@@ -326,6 +329,84 @@ public class Processor extends AbstractProcessor {
                         new PlaceholderValue("$L", name, 2L),
                         new PlaceholderValue("$L", name, null)
                 );
+            case "java.util.Date":{
+                DeclaredType dtype = (DeclaredType) type;
+                TypeElement element = (TypeElement) dtype.asElement();
+                MethodSpec factory1 = factories.computeIfAbsent(new FactoryKey(element, 1), e -> createDate(1));
+                MethodSpec factory2 = factories.computeIfAbsent(new FactoryKey(element, 2), e -> createDate(2));
+
+                return Arrays.asList(
+                        new PlaceholderValue("$N()", name, factory1),
+                        new PlaceholderValue("$N()", name, factory2),
+                        new PlaceholderValue("$L", name, null)
+                );
+            }
+            case "java.time.LocalDate": {
+                DeclaredType dtype = (DeclaredType) type;
+                TypeElement element = (TypeElement) dtype.asElement();
+                MethodSpec factory1 = factories.computeIfAbsent(new FactoryKey(element, 1), e -> createLocalDate(1));
+                MethodSpec factory2 = factories.computeIfAbsent(new FactoryKey(element, 2), e -> createLocalDate(2));
+
+                return Arrays.asList(
+                        new PlaceholderValue("$N()", name, factory1),
+                        new PlaceholderValue("$N()", name, factory2),
+                        new PlaceholderValue("$L", name, null)
+                );
+            }
+            case "java.time.LocalTime": {
+                DeclaredType dtype = (DeclaredType) type;
+                TypeElement element = (TypeElement) dtype.asElement();
+                MethodSpec factory1 = factories.computeIfAbsent(new FactoryKey(element, 1), e -> createLocalTime(1));
+                MethodSpec factory2 = factories.computeIfAbsent(new FactoryKey(element, 2), e -> createLocalTime(2));
+
+                return Arrays.asList(
+                        new PlaceholderValue("$N()", name, factory1),
+                        new PlaceholderValue("$N()", name, factory2),
+                        new PlaceholderValue("$L", name, null)
+                );
+            }
+            case "java.time.LocalDateTime": {
+                DeclaredType dtype = (DeclaredType) type;
+                TypeElement element = (TypeElement) dtype.asElement();
+                MethodSpec factory1 = factories.computeIfAbsent(new FactoryKey(element, 1), e -> createLocalDateTime(1));
+                MethodSpec factory2 = factories.computeIfAbsent(new FactoryKey(element, 2), e -> createLocalDateTime(2));
+
+                return Arrays.asList(
+                        new PlaceholderValue("$N()", name, factory1),
+                        new PlaceholderValue("$N()", name, factory2),
+                        new PlaceholderValue("$L", name, null)
+                );
+            }
+            case "java.util.List": {
+                DeclaredType dtype = (DeclaredType) type;
+                TypeElement element = (TypeElement) dtype.asElement();
+                MethodSpec factory1 = factories.computeIfAbsent(new FactoryKey(element, 1), e -> createList());
+
+                return Arrays.asList(
+                        new PlaceholderValue("$N()", name, factory1),
+                        new PlaceholderValue("$L", name, null)
+                );
+            }
+            case "java.util.Set": {
+                DeclaredType dtype = (DeclaredType) type;
+                TypeElement element = (TypeElement) dtype.asElement();
+                MethodSpec factory1 = factories.computeIfAbsent(new FactoryKey(element, 1), e -> createSet());
+
+                return Arrays.asList(
+                        new PlaceholderValue("$N()", name, factory1),
+                        new PlaceholderValue("$L", name, null)
+                );
+            }
+            case "java.util.Map": {
+                DeclaredType dtype = (DeclaredType) type;
+                TypeElement element = (TypeElement) dtype.asElement();
+                MethodSpec factory1 = factories.computeIfAbsent(new FactoryKey(element, 1), e -> createMap());
+
+                return Arrays.asList(
+                        new PlaceholderValue("$N()", name, factory1),
+                        new PlaceholderValue("$L", name, null)
+                );
+            }
             default:
                 if (type instanceof DeclaredType) {
                     DeclaredType dtype = (DeclaredType) type;
@@ -366,6 +447,57 @@ public class Processor extends AbstractProcessor {
         }
     }
 
+    private MethodSpec createList() {
+        return MethodSpec.methodBuilder("createList")
+                .returns(List.class)
+                .addStatement("return $T.asList()", Arrays.class)
+                .build();
+    }
+
+    private MethodSpec createSet() {
+        return MethodSpec.methodBuilder("createSet")
+                .returns(Set.class)
+                .addStatement("return $T.emptySet()", Collections.class)
+                .build();
+    }
+
+    private MethodSpec createMap() {
+        return MethodSpec.methodBuilder("createMap")
+                .returns(Map.class)
+                .addStatement("return $T.emptyMap()", Collections.class)
+                .build();
+    }
+
+    private MethodSpec createDate(int n) {
+        return MethodSpec.methodBuilder("createDate" + n)
+                .returns(Date.class)
+                .addStatement("$T date = new $T()", Date.class, Date.class)
+                .addStatement("date.setTime($LL)", System.currentTimeMillis() + n * 1000)
+                .addStatement("return date")
+                .build();
+    }
+
+    private MethodSpec createLocalTime(int n) {
+        return MethodSpec.methodBuilder("createLocalTime" + n)
+                .returns(LocalTime.class)
+                .addStatement("return LocalTime.ofSecondOfDay($LL)", n * 1000)
+                .build();
+    }
+
+    private MethodSpec createLocalDate(int n) {
+        return MethodSpec.methodBuilder("createLocalDate" + n)
+                .returns(LocalDate.class)
+                .addStatement("return LocalDate.ofEpochDay($LL)", System.currentTimeMillis() / 1000 / 60 / 60 / 24 + n)
+                .build();
+    }
+
+    private MethodSpec createLocalDateTime(int n) {
+        return MethodSpec.methodBuilder("createLocalDateTime" + n)
+                .returns(LocalDateTime.class)
+                .addStatement("return LocalDateTime.of(LocalDate.ofEpochDay($LL), LocalTime.ofSecondOfDay($LL))",
+                        System.currentTimeMillis() / 1000 / 60 / 60 / 24 + n, n * 1000)
+                .build();
+    }
 
     private MethodSpec createFactoryFor(TypeElement e, int n) {
         CodeBlock.Builder builder = CodeBlock.builder();
