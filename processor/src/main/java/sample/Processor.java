@@ -53,14 +53,14 @@ public class Processor extends AbstractProcessor {
         targetElements.addAll(roundEnv.getElementsAnnotatedWith(Data.class));
         targetElements.addAll(roundEnv.getElementsAnnotatedWith(Value.class));
         targetElements.addAll(roundEnv.getElementsAnnotatedWith(EqualsAndHashCode.class));
+        targetElements.removeIf(e -> e.getModifiers().contains(Modifier.PRIVATE) || e.getModifiers().contains(Modifier.ABSTRACT));
 
         Filer filer = super.processingEnv.getFiler();
         try {
             for (Element element : targetElements) {
                 factories = new HashMap<>();
-                String qname = element.toString() + "_LombokTest";
-                PackageAndClass name = PackageAndClass.of(qname);
-                TypeSpec.Builder builder = TypeSpec.classBuilder(name.getClassName())
+                PackageAndClass name = PackageAndClass.of(element);
+                TypeSpec.Builder builder = TypeSpec.classBuilder(name.getClassName() + "_LombokTest")
                         .addModifiers(Modifier.PUBLIC);
 
                 if (hasToString(element)) {
@@ -117,8 +117,7 @@ public class Processor extends AbstractProcessor {
     }
 
     private boolean needsFillConstructor(TypeElement element) {
-        return element.getAnnotation(Value.class) != null ||
-                (element.getAnnotation(NoArgsConstructor.class) != null && element.getAnnotation(AllArgsConstructor.class) == null);
+        return element.getAnnotation(Value.class) != null || element.getAnnotation(AllArgsConstructor.class) != null;
     }
 
     private Predicate<String> testFields(TypeElement element) {
@@ -143,7 +142,7 @@ public class Processor extends AbstractProcessor {
     private List<TypeAndName> fields(TypeElement element) {
         Predicate<String> testFields = testFields(element);
         return element.getEnclosedElements().stream()
-                .filter(e -> e.getKind() == ElementKind.FIELD)
+                .filter(e -> e.getKind() == ElementKind.FIELD && ! e.getModifiers().contains(Modifier.STATIC))
                 .map(e -> (VariableElement)e)
                 .map(e -> new TypeAndName(e.asType(), e.getSimpleName(), testValueOfType(e.asType(), e.getSimpleName(), testFields)))
                 .collect(Collectors.toList());
@@ -288,6 +287,9 @@ public class Processor extends AbstractProcessor {
 
     private String setter(Name name) {
         String s = name.toString();
+        if (s.startsWith("is")) {
+            s = s.substring(2);
+        }
         return s.substring(0, 1).toUpperCase() + s.substring(1);
     }
 
@@ -320,13 +322,24 @@ public class Processor extends AbstractProcessor {
                 );
             case "long":
                 return Arrays.asList(
-                        new PlaceholderValue("$L", name, 1L),
-                        new PlaceholderValue("$L", name, 2L)
+                        new PlaceholderValue("$LL", name, 1L),
+                        new PlaceholderValue("$LL", name, 2L)
                 );
             case "java.lang.Long":
                 return Arrays.asList(
-                        new PlaceholderValue("$L", name, 1L),
-                        new PlaceholderValue("$L", name, 2L),
+                        new PlaceholderValue("$LL", name, 1L),
+                        new PlaceholderValue("$LL", name, 2L),
+                        new PlaceholderValue("$L", name, null)
+                );
+            case "boolean":
+                return Arrays.asList(
+                        new PlaceholderValue("$L", name, true),
+                        new PlaceholderValue("$L", name, false)
+                );
+            case "java.lang.Boolean":
+                return Arrays.asList(
+                        new PlaceholderValue("$L", name, true),
+                        new PlaceholderValue("$L", name, false),
                         new PlaceholderValue("$L", name, null)
                 );
             case "java.util.Date":{
@@ -421,30 +434,32 @@ public class Processor extends AbstractProcessor {
                         );
                     }
                 }
+                System.out.printf("unknown type:%s\n", type);
                 return Arrays.asList(new PlaceholderValue("$L", name, null));
         }
     }
     private PlaceholderValue testValueOfType2(TypeMirror type, Name name, int n) {
-        switch (type.toString()) {
-            case "java.lang.String":
-                return new PlaceholderValue("$S", name, String.format("%s%d", name.toString(), n));
-            case "int":
-            case "java.lang.Integer":
-                return new PlaceholderValue("$L", name, n);
-            case "long":
-            case "java.lang.Long":
-                return new PlaceholderValue("$L", name, (long) n);
-            default:
-                if (type instanceof DeclaredType) {
-                    DeclaredType dtype = (DeclaredType) type;
-                    TypeElement element = (TypeElement) dtype.asElement();
-                    if (targetElements.contains(element)) {
-                        MethodSpec factory = factories.computeIfAbsent(new FactoryKey(element, n), e -> createFactoryFor(e.getElement(), n));
-                        return new PlaceholderValue("$N()", name, factory);
-                    }
-                }
-                return new PlaceholderValue("$L", name, null);
-        }
+        return testValueOfType(type, name).get(n - 1);
+//        switch (type.toString()) {
+//            case "java.lang.String":
+//                return new PlaceholderValue("$S", name, String.format("%s%d", name.toString(), n));
+//            case "int":
+//            case "java.lang.Integer":
+//                return new PlaceholderValue("$L", name, n);
+//            case "long":
+//            case "java.lang.Long":
+//                return new PlaceholderValue("$L", name, (long) n);
+//            default:
+//                if (type instanceof DeclaredType) {
+//                    DeclaredType dtype = (DeclaredType) type;
+//                    TypeElement element = (TypeElement) dtype.asElement();
+//                    if (targetElements.contains(element)) {
+//                        MethodSpec factory = factories.computeIfAbsent(new FactoryKey(element, n), e -> createFactoryFor(e.getElement(), n));
+//                        return new PlaceholderValue("$N()", name, factory);
+//                    }
+//                }
+//                return new PlaceholderValue("$L", name, null);
+//        }
     }
 
     private MethodSpec createList() {
@@ -494,8 +509,9 @@ public class Processor extends AbstractProcessor {
     private MethodSpec createLocalDateTime(int n) {
         return MethodSpec.methodBuilder("createLocalDateTime" + n)
                 .returns(LocalDateTime.class)
-                .addStatement("return LocalDateTime.of(LocalDate.ofEpochDay($LL), LocalTime.ofSecondOfDay($LL))",
-                        System.currentTimeMillis() / 1000 / 60 / 60 / 24 + n, n * 1000)
+                .addStatement("return LocalDateTime.of($T.ofEpochDay($LL), $T.ofSecondOfDay($LL))",
+                        LocalDate.class, System.currentTimeMillis() / 1000 / 60 / 60 / 24 + n,
+                        LocalTime.class, n * 1000)
                 .build();
     }
 
@@ -516,13 +532,15 @@ public class Processor extends AbstractProcessor {
         String packageName;
         String className;
 
-        static PackageAndClass of(String name) {
-            int index = name.lastIndexOf('.');
-            if (index >= 0) {
-                return new PackageAndClass(name.substring(0, index), name.substring(index + 1));
-            } else {
-                return new PackageAndClass("", name);
+        static PackageAndClass of(Element element) {
+            Element packageElement = element.getEnclosingElement();
+            while (packageElement.getEnclosingElement() != null) {
+                packageElement = packageElement.getEnclosingElement();
             }
+            String packageName = ((QualifiedNameable) packageElement).getQualifiedName().toString();
+            String name = element.toString();
+//            int index = name.lastIndexOf('.');
+            return new PackageAndClass(packageName, name.substring(packageName.length() + 1).replace('.', '_'));
         }
     }
 
